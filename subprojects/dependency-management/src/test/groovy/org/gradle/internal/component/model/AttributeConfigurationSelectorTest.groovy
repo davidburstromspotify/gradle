@@ -20,6 +20,9 @@ import com.google.common.base.Optional
 import com.google.common.collect.ImmutableList
 import org.gradle.api.artifacts.ModuleVersionIdentifier
 import org.gradle.api.artifacts.component.ComponentIdentifier
+import org.gradle.api.attributes.Attribute
+import org.gradle.api.attributes.AttributeCompatibilityRule
+import org.gradle.api.attributes.CompatibilityCheckDetails
 import org.gradle.api.capabilities.CapabilitiesMetadata
 import org.gradle.api.capabilities.Capability
 import org.gradle.api.internal.attributes.AttributesSchemaInternal
@@ -192,6 +195,100 @@ All of them match the consumer attributes:
       - Required org.gradle.usage 'java-api' and found compatible value 'java-api'.'''
     }
 
+    def "should select the variant which matches the most attributes"() {
+        given:
+        component(
+                variant("first", attributes('org.gradle.usage': 'java-api')),
+                variant("second", attributes('org.gradle.usage': 'java-api', 'other': true))
+        )
+
+        and:
+        consumerAttributes('org.gradle.usage': 'java-api')
+
+        when:
+        performSelection()
+
+        then:
+        selected.name == 'first'
+    }
+
+    def "should not select variant whenever 2 variants provide different extra attributes"() {
+        given:
+        component(
+                variant("first", attributes('org.gradle.usage': 'java-api', extra: 'v1')),
+                variant("second", attributes('org.gradle.usage': 'java-api', other: true))
+        )
+
+        and:
+        consumerAttributes('org.gradle.usage': 'java-api')
+
+        when:
+        performSelection()
+
+        then:
+        AmbiguousConfigurationSelectionException e = thrown()
+        e.message == '''Cannot choose between the following variants of org:lib:1.0:
+  - first
+  - second
+All of them match the consumer attributes:
+  - Variant 'first' capability org:lib:1.0:
+      - Found extra 'v1' but wasn't required.
+      - Required org.gradle.usage 'java-api' and found compatible value 'java-api'.
+  - Variant 'second' capability org:lib:1.0:
+      - Required org.gradle.usage 'java-api' and found compatible value 'java-api'.
+      - Found other 'true' but wasn't required.'''
+
+    }
+
+    def "should not select variant whenever 2 variants provide more than one extra attributes"() {
+        given:
+        component(
+                variant("first", attributes('org.gradle.usage': 'java-api', extra: 'v1', other: true)),
+                variant("second", attributes('org.gradle.usage': 'java-api', other: true))
+        )
+
+        and:
+        consumerAttributes('org.gradle.usage': 'java-api')
+
+        when:
+        performSelection()
+
+        then:
+        AmbiguousConfigurationSelectionException e = thrown()
+        e.message == '''Cannot choose between the following variants of org:lib:1.0:
+  - first
+  - second
+All of them match the consumer attributes:
+  - Variant 'first' capability org:lib:1.0:
+      - Found extra 'v1' but wasn't required.
+      - Required org.gradle.usage 'java-api' and found compatible value 'java-api'.
+      - Found other 'true' but wasn't required.
+  - Variant 'second' capability org:lib:1.0:
+      - Required org.gradle.usage 'java-api' and found compatible value 'java-api'.
+      - Found other 'true' but wasn't required.'''
+
+    }
+
+
+    def "should select the variant which matches the most attributes and producer doesn't have requested value"() {
+        given:
+        component(
+                variant("first", attributes('org.gradle.usage': 'java-api')),
+                variant("second", attributes('org.gradle.usage': 'java-runtime', 'other': true))
+        )
+        attributesSchema.attribute(Attribute.of("org.gradle.usage", String)) {
+            it.compatibilityRules.add(UsageCompatibilityRule)
+        }
+        and:
+        consumerAttributes('org.gradle.usage': 'java-api', 'other': true)
+
+        when:
+        performSelection()
+
+        then:
+        selected.name == 'second'
+    }
+
     private void performSelection() {
         selected = AttributeConfigurationSelector.selectConfigurationUsingAttributeMatching(
                 consumerAttributes,
@@ -246,5 +343,15 @@ All of them match the consumer attributes:
 
     private Capability capability(String name) {
         capability('org', name)
+    }
+
+    private static class UsageCompatibilityRule implements AttributeCompatibilityRule<String> {
+
+        @Override
+        void execute(CompatibilityCheckDetails<String> details) {
+            if (details.consumerValue == 'java-api' && details.producerValue=='java-runtime') {
+                details.compatible()
+            }
+        }
     }
 }

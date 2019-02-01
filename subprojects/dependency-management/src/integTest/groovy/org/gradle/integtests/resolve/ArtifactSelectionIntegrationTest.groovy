@@ -720,6 +720,7 @@ task show {
             project(':lib') {
                 configurations {
                     compile {
+                        attributes.attribute(buildType, 'prout')
                         outgoing {
                             variants {
                                 debug {
